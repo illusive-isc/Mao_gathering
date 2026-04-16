@@ -6,6 +6,7 @@ GitHub Pages で公開する ImageGallery 用データリポジトリ。
 
 ```
 config.txt          ← ImageGalleryManager が読む設定ファイル
+permissions.txt     ← StaffManager が読む権限リスト
 images/
   nature/           ← 001.jpg, 002.jpg, ...
   city/             ← 001.jpg, 002.jpg, ...
@@ -31,3 +32,21 @@ Settings → Pages → Source: `main` ブランチ `/` (root)
 
 公開後の config.txt URL:
 `https://<username>.github.io/Mao_gathering/config.txt`
+
+公開後の permissions.txt URL:
+`https://<username>.github.io/Mao_gathering/permissions.txt`
+
+## permissions.txt フォーマット
+
+```
+[admin]
+AdminName1
+
+[staff]
+StaffName1
+StaffName2
+```
+
+- `[admin]` / `[staff]` セクション区切り
+- 空行・`#` 始まり行は無視
+- StaffManager の `Staff List Url` にURLを設定する
