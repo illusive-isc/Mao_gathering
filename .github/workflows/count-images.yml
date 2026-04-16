@@ -16,6 +16,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Rename images to sequential numbers
+        run: |
+          python3 - <<'EOF'
+          import os, re
+
+          images_root = "images"
+          exts = (".jpg", ".jpeg", ".png", ".webp")
+
+          for type_name in os.listdir(images_root):
+              folder = os.path.join(images_root, type_name)
+              if not os.path.isdir(folder):
+                  continue
+
+              files = sorted(
+                  f for f in os.listdir(folder)
+                  if f.lower().endswith(exts)
+              )
+
+              # 一時名にリネームしてから連番に確定（上書きコンフリクト回避）
+              tmp_files = []
+              for f in files:
+                  tmp = f + ".tmp"
+                  os.rename(os.path.join(folder, f), os.path.join(folder, tmp))
+                  tmp_files.append(tmp)
+
+              for i, tmp in enumerate(tmp_files, start=1):
+                  _, ext = os.path.splitext(tmp[:-4])  # .tmp を除いた拡張子
+                  os.rename(
+                      os.path.join(folder, tmp),
+                      os.path.join(folder, f"{i:03d}{ext.lower()}")
+                  )
+              print(f"{type_name}: {len(tmp_files)} files renamed")
+          EOF
+
       - name: Count images and update config.txt
         run: |
           python3 - <<'EOF'
