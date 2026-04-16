@@ -1,4 +1,4 @@
-name: Count and Deploy
+name: Distribute and Deploy
 
 on:
   push:
@@ -16,13 +16,90 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Distribute tmp images and update config.txt
+        run: |
+          python3 - <<'EOF'
+          import os, re, shutil
+
+          tmp_dir     = os.path.join("images", "tmp")
+          images_root = "images"
+          config_path = "config.txt"
+          exts        = (".jpg", ".jpeg", ".png", ".webp")
+
+          if not os.path.isdir(tmp_dir):
+              print("no tmp folder, skipping")
+              exit(0)
+
+          # ── tmp 内のファイルをパースして振り分け ──────────────────────────
+          # ファイル名形式: [タイプ名]_[投稿者名].png  (最初の _ で分割)
+          new_entries = []   # (type_name, username) の順序付きリスト
+          for fname in sorted(os.listdir(tmp_dir)):
+              if not fname.lower().endswith(exts):
+                  continue
+              stem, _ = os.path.splitext(fname)
+              if "_" not in stem:
+                  print(f"skip (no underscore): {fname}")
+                  continue
+
+              type_name, username = stem.split("_", 1)
+              if not type_name or not username:
+                  print(f"skip (empty type/username): {fname}")
+                  continue
+
+              # 移動先フォルダ作成
+              dest_dir = os.path.join(images_root, type_name)
+              os.makedirs(dest_dir, exist_ok=True)
+
+              # 既存ファイルと重複しない一時名で移動（連番は後のステップで確定）
+              tmp_name = f"__tmp_{fname}"
+              shutil.move(os.path.join(tmp_dir, fname), os.path.join(dest_dir, tmp_name))
+              new_entries.append((type_name, username))
+              print(f"moved {fname} -> {type_name}/{tmp_name}")
+
+          # tmp フォルダが空になったら削除
+          if not os.listdir(tmp_dir):
+              os.rmdir(tmp_dir)
+
+          if not new_entries:
+              print("no valid files to process")
+              exit(0)
+
+          # ── config.txt 更新: 同タイプグループの末尾に追加 ────────────────
+          with open(config_path, "r", encoding="utf-8") as f:
+              lines = f.readlines()
+
+          def last_index_of_type(lines, type_name):
+              idx = -1
+              for i, line in enumerate(lines):
+                  s = line.strip()
+                  if s and not s.startswith("#") and s.split(":")[0] == type_name:
+                      idx = i
+              return idx
+
+          for type_name, username in new_entries:
+              new_line = f"{type_name}:{username}\n"
+              last = last_index_of_type(lines, type_name)
+              if last >= 0:
+                  lines.insert(last + 1, new_line)
+              else:
+                  # タイプが存在しない場合はファイル末尾に追加
+                  if lines and not lines[-1].endswith("\n"):
+                      lines[-1] += "\n"
+                  lines.append(new_line)
+
+          with open(config_path, "w", encoding="utf-8") as f:
+              f.writelines(lines)
+
+          print("config.txt updated")
+          EOF
+
       - name: Rename images to sequential numbers
         run: |
           python3 - <<'EOF'
-          import os, re
+          import os
 
           images_root = "images"
-          exts = (".jpg", ".jpeg", ".png", ".webp")
+          exts        = (".jpg", ".jpeg", ".png", ".webp")
 
           for type_name in os.listdir(images_root):
               folder = os.path.join(images_root, type_name)
@@ -34,7 +111,7 @@ jobs:
                   if f.lower().endswith(exts)
               )
 
-              # 一時名にリネームしてから連番に確定（上書きコンフリクト回避）
+              # 一時名にリネームしてコンフリクト回避
               tmp_files = []
               for f in files:
                   tmp = f + ".tmp"
@@ -50,50 +127,12 @@ jobs:
               print(f"{type_name}: {len(tmp_files)} files renamed")
           EOF
 
-      - name: Count images and update config.txt
-        run: |
-          python3 - <<'EOF'
-          import os
-
-          config_path = "config.txt"
-          images_root = "images"
-
-          with open(config_path, "r", encoding="utf-8") as f:
-              lines = f.readlines()
-
-          new_lines = []
-          for line in lines:
-              stripped = line.strip()
-              if stripped.startswith("#") or stripped == "":
-                  new_lines.append(line)
-                  continue
-
-              parts = stripped.split(":")
-              type_name = parts[0]
-              folder = os.path.join(images_root, type_name)
-
-              if os.path.isdir(folder):
-                  count = len([
-                      f for f in os.listdir(folder)
-                      if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
-                  ])
-                  parts[1] = str(count)
-                  new_lines.append(":".join(parts) + "\n")
-              else:
-                  new_lines.append(line)
-
-          with open(config_path, "w", encoding="utf-8") as f:
-              f.writelines(new_lines)
-
-          print("config.txt updated")
-          EOF
-
       - name: Commit and push if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add config.txt
-          git diff --cached --quiet || git commit -m "auto: update image counts in config.txt"
+          git add config.txt images/
+          git diff --cached --quiet || git commit -m "auto: distribute tmp images and update config.txt"
           git push
 
       - name: Build deploy directory (config + permissions + images only)
