@@ -43,9 +43,10 @@ jobs:
                   print(f"skip (no comma): {fname}")
                   continue
               type_name, username = stem.split(",", 1)
-              if not type_name or not username:
-                  print(f"skip (empty type/username): {fname}")
+              if not type_name:
+                  print(f"skip (empty type): {fname}")
                   continue
+              # username は空文字列も許容（config.txt の "nature:" に対応）
               type_entries[type_name].append((username, os.path.join(tmp_dir, fname)))
 
           if not type_entries:
