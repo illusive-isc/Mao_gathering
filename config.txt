@@ -1,0 +1,11 @@
+# ImageGallery 設定ファイル
+# フォーマット: タイプ名:登録数:有効枚数
+#
+# - 登録数   : imageUrls[] に登録した枚数（スロット総数）
+# - 有効枚数 : 実際にアップロード済みの枚数（有効枚数を増やすだけで新画像が追加される）
+#
+# 画像URL例: https://<username>.github.io/Mao_gathering/images/nature/001.jpg
+
+nature:100:0
+city:100:0
+food:100:0

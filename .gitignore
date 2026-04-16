@@ -1,0 +1,7 @@
+# 大きな画像ファイルは Git LFS 推奨
+# *.jpg filter=lfs diff=lfs merge=lfs -text
+# *.png filter=lfs diff=lfs merge=lfs -text
+
+# OS
+.DS_Store
+Thumbs.db
