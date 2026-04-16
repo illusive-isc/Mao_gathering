@@ -10,8 +10,6 @@
 # nature:001:illusive_isc
 # city:001:Ruby3dayo
 # food:001:Another674
-city:001:ill
+city:001:
 city:002:illusive
-city:
-city:illusive
-city:illusoryOverride
+city:003:illusoryOverride
