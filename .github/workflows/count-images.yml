@@ -3,12 +3,14 @@ name: Distribute and Deploy
 on:
   push:
     paths:
-      - "images/**"
+      - "tmp/**"
+      - "delete/**"
+      - "data/**"
       - "config.txt"
       - "permissions.txt"
 
 jobs:
-  count-and-build:
+  process-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -16,73 +18,71 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reset all data if delete trigger exists
+      - name: Delete types triggered by delete/[type]
         run: |
           python3 - <<'EOF'
-          import os, glob
+          import os, shutil
 
-          delete_dir  = os.path.join("images", "tmp", "delete")
-          images_root = "images"
+          delete_dir  = "delete"
+          data_dir    = "data"
           config_path = "config.txt"
-          exts        = (".jpg", ".jpeg", ".png", ".webp")
 
           if not os.path.isdir(delete_dir):
-              print("no delete folder, skipping reset")
+              print("no delete folder, skipping")
               exit(0)
 
-          # .gitkeep 以外のファイルが存在するか確認
-          trigger_files = [
+          # delete/ 直下の .gitkeep 以外のエントリをタイプ名として扱う
+          triggers = [
               f for f in os.listdir(delete_dir)
               if f != ".gitkeep"
           ]
-          if not trigger_files:
-              print("no trigger files in delete/, skipping reset")
+          if not triggers:
+              print("no delete triggers, skipping")
               exit(0)
 
-          print(f"reset triggered by: {trigger_files}")
-
-          # ── タイプフォルダ（tmp 以外）の画像をすべて削除 ──────────────
-          for type_name in os.listdir(images_root):
-              if type_name == "tmp":
-                  continue
-              folder = os.path.join(images_root, type_name)
-              if not os.path.isdir(folder):
-                  continue
-              for fname in os.listdir(folder):
-                  if fname.lower().endswith(exts):
-                      os.remove(os.path.join(folder, fname))
-                      print(f"  deleted: {type_name}/{fname}")
-
-          # ── config.txt のデータ行（コメント・空行以外）を削除 ──────────
           with open(config_path, "r", encoding="utf-8") as f:
               lines = f.readlines()
 
-          new_lines = [
-              line for line in lines
-              if line.strip() == "" or line.strip().startswith("#")
-          ]
+          for type_name in triggers:
+              # data/[type]/ を丸ごと削除
+              type_dir = os.path.join(data_dir, type_name)
+              if os.path.isdir(type_dir):
+                  shutil.rmtree(type_dir)
+                  print(f"deleted: data/{type_name}/")
+              else:
+                  print(f"no data dir for type: {type_name}")
+
+              # config.txt からそのタイプの行を削除
+              lines = [
+                  line for line in lines
+                  if not (
+                      line.strip()
+                      and not line.strip().startswith("#")
+                      and line.strip().split(":")[0] == type_name
+                  )
+              ]
+
+              # トリガーを削除（ファイルでもフォルダでも対応、.gitkeep は残す）
+              trigger_path = os.path.join(delete_dir, type_name)
+              if os.path.isfile(trigger_path):
+                  os.remove(trigger_path)
+              elif os.path.isdir(trigger_path):
+                  shutil.rmtree(trigger_path)
+              print(f"removed trigger: delete/{type_name}")
 
           with open(config_path, "w", encoding="utf-8") as f:
-              f.writelines(new_lines)
+              f.writelines(lines)
 
-          print("config.txt data lines cleared")
-
-          # ── delete/ 内のトリガーファイルを削除（.gitkeep は残す）──────
-          for fname in trigger_files:
-              os.remove(os.path.join(delete_dir, fname))
-              print(f"  removed trigger: {fname}")
-
-          print("reset complete")
+          print("delete complete")
           EOF
 
-      - name: Distribute tmp images and update config.txt
+      - name: Distribute tmp/[type]/[name]/ entries to data/
         run: |
           python3 - <<'EOF'
-          import os, re, shutil
-          from collections import defaultdict
+          import os, shutil
 
-          tmp_dir     = os.path.join("images", "tmp")
-          images_root = "images"
+          tmp_dir     = "tmp"
+          data_dir    = "data"
           config_path = "config.txt"
           exts        = (".jpg", ".jpeg", ".png", ".webp")
 
@@ -90,120 +90,110 @@ jobs:
               print("no tmp folder, skipping")
               exit(0)
 
-          # ── tmp 内ファイルをタイプごとにグループ化（ファイル名ソート済み）──
-          # ファイル名形式: [タイプ名],[投稿者名].ext  (カンマで分割、投稿者名は空可)
-          type_entries = defaultdict(list)  # type_name -> [(username, src_path)]
-
-          for fname in sorted(os.listdir(tmp_dir)):
-              if not fname.lower().endswith(exts):
-                  continue
-              stem, _ = os.path.splitext(fname)
-              if "," not in stem:
-                  print(f"skip (no comma): {fname}")
-                  continue
-              type_name, username = stem.split(",", 1)
-              if not type_name:
-                  print(f"skip (empty type): {fname}")
-                  continue
-              type_entries[type_name].append((username, os.path.join(tmp_dir, fname)))
-
-          if not type_entries:
-              print("no valid files to process")
-              if not os.listdir(tmp_dir):
-                  os.rmdir(tmp_dir)
-              exit(0)
-
-          # ── config.txt 読み込み ─────────────────────────────────────────
+          # config.txt 読み込み
           with open(config_path, "r", encoding="utf-8") as f:
               lines = f.readlines()
 
-          def used_slots(lines, type_name):
-              """そのタイプで使用済みのスロット番号セットを返す"""
-              slots = set()
+          def get_max_slot(lines, type_name):
               for line in lines:
                   s = line.strip()
-                  if not s or s.startswith("#"):
-                      continue
-                  parts = s.split(":")
-                  if parts[0] == type_name and len(parts) >= 2:
+                  if s and not s.startswith("#") and s.split(":")[0] == type_name:
                       try:
-                          slots.add(int(parts[1]))
-                      except ValueError:
+                          return int(s.split(":")[1])
+                      except (IndexError, ValueError):
                           pass
-              return slots
+              return 0
 
-          def last_index_of_type(lines, type_name):
-              idx = -1
+          def set_max_slot(lines, type_name, slot):
               for i, line in enumerate(lines):
                   s = line.strip()
                   if s and not s.startswith("#") and s.split(":")[0] == type_name:
-                      idx = i
-              return idx
+                      lines[i] = f"{type_name}:{slot:03d}\n"
+                      return
+              # タイプが存在しない場合は末尾に追加
+              if lines and not lines[-1].endswith("\n"):
+                  lines[-1] += "\n"
+              lines.append(f"{type_name}:{slot:03d}\n")
 
-          def next_slot(slots):
-              """使用済みスロットの最大値 + 1 を返す（最初は 1）"""
-              return max(slots, default=0) + 1
+          # tmp/[type]/ を走査（.gitkeep は無視）
+          type_names = sorted([
+              d for d in os.listdir(tmp_dir)
+              if os.path.isdir(os.path.join(tmp_dir, d)) and d != ".gitkeep"
+          ])
 
-          # ── タイプごとにまとめて処理 ────────────────────────────────────
-          for type_name in sorted(type_entries.keys()):
-              entries    = type_entries[type_name]
-              dest_dir   = os.path.join(images_root, type_name)
-              os.makedirs(dest_dir, exist_ok=True)
+          for type_name in type_names:
+              type_tmp_dir = os.path.join(tmp_dir, type_name)
+              # tmp/[type]/[name]/ のサブフォルダをソートして処理
+              entries = sorted([
+                  d for d in os.listdir(type_tmp_dir)
+                  if os.path.isdir(os.path.join(type_tmp_dir, d))
+              ])
 
-              slots      = used_slots(lines, type_name)
-              new_lines  = []
+              if not entries:
+                  continue
 
-              for username, src in entries:
-                  slot = next_slot(slots)
-                  slots.add(slot)
-                  dest_name = f"{slot:03d}.jpg"
-                  shutil.move(src, os.path.join(dest_dir, dest_name))
-                  new_lines.append(f"{type_name}:{slot:03d}:{username}\n")
-                  print(f"  {type_name}/{dest_name}  <- {username}")
+              slot = get_max_slot(lines, type_name)
 
-              # 同タイプグループの末尾にまとめて挿入
-              last = last_index_of_type(lines, type_name)
-              if last >= 0:
-                  for j, line in enumerate(new_lines):
-                      lines.insert(last + 1 + j, line)
-              else:
-                  if lines and not lines[-1].endswith("\n"):
-                      lines[-1] += "\n"
-                  lines.extend(new_lines)
+              for entry_name in entries:
+                  entry_dir = os.path.join(type_tmp_dir, entry_name)
 
-              print(f"{type_name}: added {len(new_lines)} entries")
+                  # エントリフォルダ内の画像ファイルを探す
+                  image_file = None
+                  for fname in sorted(os.listdir(entry_dir)):
+                      if fname.lower().endswith(exts):
+                          image_file = os.path.join(entry_dir, fname)
+                          break
 
-          # tmp フォルダが空になったら削除
-          if os.path.isdir(tmp_dir) and not os.listdir(tmp_dir):
-              os.rmdir(tmp_dir)
+                  if not image_file:
+                      print(f"skip (no image): tmp/{type_name}/{entry_name}/")
+                      continue
+
+                  slot += 1
+                  dest_dir = os.path.join(data_dir, type_name, f"{slot:03d}")
+                  os.makedirs(dest_dir, exist_ok=True)
+
+                  # 画像を image.png として保存
+                  shutil.move(image_file, os.path.join(dest_dir, "image.png"))
+
+                  # meta.txt にエントリ名を保存
+                  with open(os.path.join(dest_dir, "meta.txt"), "w", encoding="utf-8") as f:
+                      f.write(entry_name + "\n")
+
+                  # 処理済みエントリフォルダを削除
+                  shutil.rmtree(entry_dir)
+                  print(f"  data/{type_name}/{slot:03d}/ <- {entry_name}")
+
+              # config.txt の最大スロット番号を更新
+              set_max_slot(lines, type_name, slot)
+              print(f"{type_name}: max slot -> {slot:03d}")
 
           with open(config_path, "w", encoding="utf-8") as f:
               f.writelines(lines)
 
-          print("config.txt updated")
+          print("distribute complete")
           EOF
 
       - name: Commit and push if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add config.txt images/
-          git diff --cached --quiet || git commit -m "auto: distribute tmp images and update config.txt"
+          git add config.txt data/ tmp/ delete/
+          git diff --cached --quiet || git commit -m "auto: process tmp and delete triggers"
           git push
 
-      - name: Build deploy directory (config + permissions + images only)
+      - name: Build deploy directory
         run: |
           mkdir -p _site
           cp config.txt _site/
           cp permissions.txt _site/
-          cp -r images/ _site/images/
+          cp -r data/ _site/data/
 
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
 
   deploy:
-    needs: count-and-build
+    needs: process-and-build
     runs-on: ubuntu-latest
     permissions:
       pages: write
