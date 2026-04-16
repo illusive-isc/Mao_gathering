@@ -19,7 +19,7 @@ jobs:
       - name: Distribute tmp images and update config.txt
         run: |
           python3 - <<'EOF'
-          import os, shutil
+          import os, re, shutil
           from collections import defaultdict
 
           tmp_dir     = os.path.join("images", "tmp")
@@ -32,7 +32,7 @@ jobs:
               exit(0)
 
           # ── tmp 内ファイルをタイプごとにグループ化（ファイル名ソート済み）──
-          # ファイル名形式: [タイプ名],[投稿者名].ext  (カンマで分割)
+          # ファイル名形式: [タイプ名],[投稿者名].ext  (カンマで分割、投稿者名は空可)
           type_entries = defaultdict(list)  # type_name -> [(username, src_path)]
 
           for fname in sorted(os.listdir(tmp_dir)):
@@ -46,7 +46,6 @@ jobs:
               if not type_name:
                   print(f"skip (empty type): {fname}")
                   continue
-              # username は空文字列も許容（config.txt の "nature:" に対応）
               type_entries[type_name].append((username, os.path.join(tmp_dir, fname)))
 
           if not type_entries:
@@ -59,6 +58,21 @@ jobs:
           with open(config_path, "r", encoding="utf-8") as f:
               lines = f.readlines()
 
+          def used_slots(lines, type_name):
+              """そのタイプで使用済みのスロット番号セットを返す"""
+              slots = set()
+              for line in lines:
+                  s = line.strip()
+                  if not s or s.startswith("#"):
+                      continue
+                  parts = s.split(":")
+                  if parts[0] == type_name and len(parts) >= 2:
+                      try:
+                          slots.add(int(parts[1]))
+                      except ValueError:
+                          pass
+              return slots
+
           def last_index_of_type(lines, type_name):
               idx = -1
               for i, line in enumerate(lines):
@@ -67,36 +81,28 @@ jobs:
                       idx = i
               return idx
 
-          def count_numbered_images(folder):
-              """__tmp_ プレフィックスなしの確定済み画像のみカウント"""
-              if not os.path.isdir(folder):
-                  return 0
-              return len([
-                  f for f in os.listdir(folder)
-                  if f.lower().endswith(exts) and not f.startswith("__tmp_")
-              ])
+          def next_slot(slots):
+              """使用済みスロットの最大値 + 1 を返す（最初は 1）"""
+              return max(slots, default=0) + 1
 
           # ── タイプごとにまとめて処理 ────────────────────────────────────
-          # sorted() でタイプ名順に処理し、各タイプ内の追加順を一貫させる
           for type_name in sorted(type_entries.keys()):
-              entries = type_entries[type_name]
-              dest_dir = os.path.join(images_root, type_name)
+              entries    = type_entries[type_name]
+              dest_dir   = os.path.join(images_root, type_name)
               os.makedirs(dest_dir, exist_ok=True)
 
-              existing = count_numbered_images(dest_dir)
-              new_lines = []
+              slots      = used_slots(lines, type_name)
+              new_lines  = []
 
-              for i, (username, src) in enumerate(entries, start=existing + 1):
-                  # __tmp_{連番}_{投稿者名}.jpg
-                  # 連番を埋め込むことでリネームステップ後の順序を明示的に保証：
-                  #   既存 001.jpg, 002.jpg の後ろに __tmp_003_Alice.jpg が並ぶ
-                  #   → rename 後: 001.jpg, 002.jpg, 003.jpg (Alice) ✓
-                  dest_name = f"__tmp_{i:03d}_{username}.jpg"
+              for username, src in entries:
+                  slot = next_slot(slots)
+                  slots.add(slot)
+                  dest_name = f"{slot:03d}.jpg"
                   shutil.move(src, os.path.join(dest_dir, dest_name))
-                  new_lines.append(f"{type_name}:{username}\n")
+                  new_lines.append(f"{type_name}:{slot:03d}:{username}\n")
                   print(f"  {type_name}/{dest_name}  <- {username}")
 
-              # 同タイプグループの末尾にまとめて挿入（タイプが連続することを保証）
+              # 同タイプグループの末尾にまとめて挿入
               last = last_index_of_type(lines, type_name)
               if last >= 0:
                   for j, line in enumerate(new_lines):
@@ -106,7 +112,7 @@ jobs:
                       lines[-1] += "\n"
                   lines.extend(new_lines)
 
-              print(f"{type_name}: added {len(new_lines)} entries (#{existing + 1}~#{existing + len(new_lines)})")
+              print(f"{type_name}: added {len(new_lines)} entries")
 
           # tmp フォルダが空になったら削除
           if os.path.isdir(tmp_dir) and not os.listdir(tmp_dir):
@@ -116,40 +122,6 @@ jobs:
               f.writelines(lines)
 
           print("config.txt updated")
-          EOF
-
-      - name: Rename images to sequential numbers
-        run: |
-          python3 - <<'EOF'
-          import os
-
-          images_root = "images"
-          exts        = (".jpg", ".jpeg", ".png", ".webp")
-
-          for type_name in os.listdir(images_root):
-              folder = os.path.join(images_root, type_name)
-              if not os.path.isdir(folder) or type_name == "tmp":
-                  continue
-
-              files = sorted(
-                  f for f in os.listdir(folder)
-                  if f.lower().endswith(exts)
-              )
-
-              # 一時名にリネームしてコンフリクト回避
-              tmp_files = []
-              for f in files:
-                  tmp = f + ".tmp"
-                  os.rename(os.path.join(folder, f), os.path.join(folder, tmp))
-                  tmp_files.append(tmp)
-
-              for i, tmp in enumerate(tmp_files, start=1):
-                  _, ext = os.path.splitext(tmp[:-4])  # .tmp を除いた拡張子
-                  os.rename(
-                      os.path.join(folder, tmp),
-                      os.path.join(folder, f"{i:03d}{ext.lower()}")
-                  )
-              print(f"{type_name}: {len(tmp_files)} files renamed")
           EOF
 
       - name: Commit and push if changed
