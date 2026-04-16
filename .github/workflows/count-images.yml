@@ -19,7 +19,8 @@ jobs:
       - name: Distribute tmp images and update config.txt
         run: |
           python3 - <<'EOF'
-          import os, re, shutil
+          import os, shutil
+          from collections import defaultdict
 
           tmp_dir     = os.path.join("images", "tmp")
           images_root = "images"
@@ -30,9 +31,10 @@ jobs:
               print("no tmp folder, skipping")
               exit(0)
 
-          # ── tmp 内のファイルをパースして振り分け ──────────────────────────
-          # ファイル名形式: [タイプ名]_[投稿者名].png  (最初の _ で分割)
-          new_entries = []   # (type_name, username) の順序付きリスト
+          # ── tmp 内ファイルをタイプごとにグループ化（ファイル名ソート済み）──
+          # ファイル名形式: [タイプ名]_[投稿者名].ext  (最初の _ で分割)
+          type_entries = defaultdict(list)  # type_name -> [(username, src_path)]
+
           for fname in sorted(os.listdir(tmp_dir)):
               if not fname.lower().endswith(exts):
                   continue
@@ -40,31 +42,19 @@ jobs:
               if "_" not in stem:
                   print(f"skip (no underscore): {fname}")
                   continue
-
               type_name, username = stem.split("_", 1)
               if not type_name or not username:
                   print(f"skip (empty type/username): {fname}")
                   continue
+              type_entries[type_name].append((username, os.path.join(tmp_dir, fname)))
 
-              # 移動先フォルダ作成
-              dest_dir = os.path.join(images_root, type_name)
-              os.makedirs(dest_dir, exist_ok=True)
-
-              # 既存ファイルと重複しない一時名で移動（連番は後のステップで確定）
-              tmp_name = f"__tmp_{fname}"
-              shutil.move(os.path.join(tmp_dir, fname), os.path.join(dest_dir, tmp_name))
-              new_entries.append((type_name, username))
-              print(f"moved {fname} -> {type_name}/{tmp_name}")
-
-          # tmp フォルダが空になったら削除
-          if not os.listdir(tmp_dir):
-              os.rmdir(tmp_dir)
-
-          if not new_entries:
+          if not type_entries:
               print("no valid files to process")
+              if not os.listdir(tmp_dir):
+                  os.rmdir(tmp_dir)
               exit(0)
 
-          # ── config.txt 更新: 同タイプグループの末尾に追加 ────────────────
+          # ── config.txt 読み込み ─────────────────────────────────────────
           with open(config_path, "r", encoding="utf-8") as f:
               lines = f.readlines()
 
@@ -76,16 +66,50 @@ jobs:
                       idx = i
               return idx
 
-          for type_name, username in new_entries:
-              new_line = f"{type_name}:{username}\n"
+          def count_numbered_images(folder):
+              """__tmp_ プレフィックスなしの確定済み画像のみカウント"""
+              if not os.path.isdir(folder):
+                  return 0
+              return len([
+                  f for f in os.listdir(folder)
+                  if f.lower().endswith(exts) and not f.startswith("__tmp_")
+              ])
+
+          # ── タイプごとにまとめて処理 ────────────────────────────────────
+          # sorted() でタイプ名順に処理し、各タイプ内の追加順を一貫させる
+          for type_name in sorted(type_entries.keys()):
+              entries = type_entries[type_name]
+              dest_dir = os.path.join(images_root, type_name)
+              os.makedirs(dest_dir, exist_ok=True)
+
+              existing = count_numbered_images(dest_dir)
+              new_lines = []
+
+              for i, (username, src) in enumerate(entries, start=existing + 1):
+                  # __tmp_{連番}_{投稿者名}.jpg
+                  # 連番を埋め込むことでリネームステップ後の順序を明示的に保証：
+                  #   既存 001.jpg, 002.jpg の後ろに __tmp_003_Alice.jpg が並ぶ
+                  #   → rename 後: 001.jpg, 002.jpg, 003.jpg (Alice) ✓
+                  dest_name = f"__tmp_{i:03d}_{username}.jpg"
+                  shutil.move(src, os.path.join(dest_dir, dest_name))
+                  new_lines.append(f"{type_name}:{username}\n")
+                  print(f"  {type_name}/{dest_name}  <- {username}")
+
+              # 同タイプグループの末尾にまとめて挿入（タイプが連続することを保証）
               last = last_index_of_type(lines, type_name)
               if last >= 0:
-                  lines.insert(last + 1, new_line)
+                  for j, line in enumerate(new_lines):
+                      lines.insert(last + 1 + j, line)
               else:
-                  # タイプが存在しない場合はファイル末尾に追加
                   if lines and not lines[-1].endswith("\n"):
                       lines[-1] += "\n"
-                  lines.append(new_line)
+                  lines.extend(new_lines)
+
+              print(f"{type_name}: added {len(new_lines)} entries (#{existing + 1}~#{existing + len(new_lines)})")
+
+          # tmp フォルダが空になったら削除
+          if os.path.isdir(tmp_dir) and not os.listdir(tmp_dir):
+              os.rmdir(tmp_dir)
 
           with open(config_path, "w", encoding="utf-8") as f:
               f.writelines(lines)
