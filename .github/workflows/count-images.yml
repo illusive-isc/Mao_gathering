@@ -1,0 +1,61 @@
+name: Count Images
+
+on:
+  push:
+    paths:
+      - "images/**"
+
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Count images and update config.txt
+        run: |
+          python3 - <<'EOF'
+          import os, re
+
+          config_path = "config.txt"
+          images_root = "images"
+
+          with open(config_path, "r", encoding="utf-8") as f:
+              lines = f.readlines()
+
+          new_lines = []
+          for line in lines:
+              stripped = line.strip()
+              if stripped.startswith("#") or stripped == "":
+                  new_lines.append(line)
+                  continue
+
+              parts = stripped.split(":")
+              type_name = parts[0]
+              folder = os.path.join(images_root, type_name)
+
+              if os.path.isdir(folder):
+                  count = len([
+                      f for f in os.listdir(folder)
+                      if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
+                  ])
+                  parts[1] = str(count)
+                  new_lines.append(":".join(parts) + "\n")
+              else:
+                  new_lines.append(line)
+
+          with open(config_path, "w", encoding="utf-8") as f:
+              f.writelines(new_lines)
+
+          print("config.txt updated")
+          EOF
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add config.txt
+          git diff --cached --quiet || git commit -m "auto: update image counts in config.txt"
+          git push
