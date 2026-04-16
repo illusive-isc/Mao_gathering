@@ -1,12 +1,14 @@
-name: Count Images
+name: Count and Deploy
 
 on:
   push:
     paths:
       - "images/**"
+      - "config.txt"
+      - "permissions.txt"
 
 jobs:
-  count:
+  count-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -17,7 +19,7 @@ jobs:
       - name: Count images and update config.txt
         run: |
           python3 - <<'EOF'
-          import os, re
+          import os
 
           config_path = "config.txt"
           images_root = "images"
@@ -59,3 +61,27 @@ jobs:
           git add config.txt
           git diff --cached --quiet || git commit -m "auto: update image counts in config.txt"
           git push
+
+      - name: Build deploy directory (config + permissions + images only)
+        run: |
+          mkdir -p _site
+          cp config.txt _site/
+          cp permissions.txt _site/
+          cp -r images/ _site/images/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: count-and-build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
