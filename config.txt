@@ -6,5 +6,5 @@
 # 画像URL例: https://<username>.github.io/Mao_gathering/images/nature/001.jpg
 
 nature:0
-city:0
+city:1
 food:100:0
