@@ -16,6 +16,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Reset all data if delete trigger exists
+        run: |
+          python3 - <<'EOF'
+          import os, glob
+
+          delete_dir  = os.path.join("images", "tmp", "delete")
+          images_root = "images"
+          config_path = "config.txt"
+          exts        = (".jpg", ".jpeg", ".png", ".webp")
+
+          if not os.path.isdir(delete_dir):
+              print("no delete folder, skipping reset")
+              exit(0)
+
+          # .gitkeep 以外のファイルが存在するか確認
+          trigger_files = [
+              f for f in os.listdir(delete_dir)
+              if f != ".gitkeep"
+          ]
+          if not trigger_files:
+              print("no trigger files in delete/, skipping reset")
+              exit(0)
+
+          print(f"reset triggered by: {trigger_files}")
+
+          # ── タイプフォルダ（tmp 以外）の画像をすべて削除 ──────────────
+          for type_name in os.listdir(images_root):
+              if type_name == "tmp":
+                  continue
+              folder = os.path.join(images_root, type_name)
+              if not os.path.isdir(folder):
+                  continue
+              for fname in os.listdir(folder):
+                  if fname.lower().endswith(exts):
+                      os.remove(os.path.join(folder, fname))
+                      print(f"  deleted: {type_name}/{fname}")
+
+          # ── config.txt のデータ行（コメント・空行以外）を削除 ──────────
+          with open(config_path, "r", encoding="utf-8") as f:
+              lines = f.readlines()
+
+          new_lines = [
+              line for line in lines
+              if line.strip() == "" or line.strip().startswith("#")
+          ]
+
+          with open(config_path, "w", encoding="utf-8") as f:
+              f.writelines(new_lines)
+
+          print("config.txt data lines cleared")
+
+          # ── delete/ 内のトリガーファイルを削除（.gitkeep は残す）──────
+          for fname in trigger_files:
+              os.remove(os.path.join(delete_dir, fname))
+              print(f"  removed trigger: {fname}")
+
+          print("reset complete")
+          EOF
+
       - name: Distribute tmp images and update config.txt
         run: |
           python3 - <<'EOF'
