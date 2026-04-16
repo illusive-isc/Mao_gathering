@@ -1,10 +1,12 @@
 # ImageGallery 設定ファイル
-# フォーマット: タイプ名:枚数
+# フォーマット: タイプ名:スロット番号:投稿者名
 #
-# - 枚数 : アップロード済みの画像枚数（増やすだけで新画像が追加される）
+# - スロット番号 : 001～100 (画像ファイルの連番と一致)
+# - 投稿者名 : 省略可能 (例: nature:001:)
+# - エントリの追加・削除は他の行に影響しない
 #
 # 画像URL例: https://<username>.github.io/Mao_gathering/images/nature/001.jpg
 
-nature:0
-city:1
-food:100:0
+# nature:001:illusive_isc
+# city:001:Ruby3dayo
+# food:001:Another674
