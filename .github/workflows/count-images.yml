@@ -103,7 +103,7 @@ jobs:
 
           for type_name in os.listdir(images_root):
               folder = os.path.join(images_root, type_name)
-              if not os.path.isdir(folder):
+              if not os.path.isdir(folder) or type_name == "tmp":
                   continue
 
               files = sorted(
