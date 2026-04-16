@@ -32,17 +32,17 @@ jobs:
               exit(0)
 
           # ── tmp 内ファイルをタイプごとにグループ化（ファイル名ソート済み）──
-          # ファイル名形式: [タイプ名]_[投稿者名].ext  (最初の _ で分割)
+          # ファイル名形式: [タイプ名],[投稿者名].ext  (カンマで分割)
           type_entries = defaultdict(list)  # type_name -> [(username, src_path)]
 
           for fname in sorted(os.listdir(tmp_dir)):
               if not fname.lower().endswith(exts):
                   continue
               stem, _ = os.path.splitext(fname)
-              if "_" not in stem:
-                  print(f"skip (no underscore): {fname}")
+              if "," not in stem:
+                  print(f"skip (no comma): {fname}")
                   continue
-              type_name, username = stem.split("_", 1)
+              type_name, username = stem.split(",", 1)
               if not type_name or not username:
                   print(f"skip (empty type/username): {fname}")
                   continue
