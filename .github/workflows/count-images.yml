@@ -155,9 +155,15 @@ jobs:
                   # 画像を image.png として保存
                   shutil.move(image_file, os.path.join(dest_dir, "image.png"))
 
-                  # meta.txt にエントリ名を保存
+                  # tmp/meta.txt があればその内容を引き継ぐ
+                  tmp_meta_path = os.path.join(entry_dir, "meta.txt")
+                  if os.path.isfile(tmp_meta_path):
+                      with open(tmp_meta_path, "r", encoding="utf-8") as f:
+                          meta_contents = f.read()
+                  else:
+                      meta_contents = entry_name + "\n"
                   with open(os.path.join(dest_dir, "meta.txt"), "w", encoding="utf-8") as f:
-                      f.write(entry_name + "\n")
+                      f.write(meta_contents)
 
                   # 処理済みエントリフォルダを削除
                   shutil.rmtree(entry_dir)
