@@ -6,4 +6,4 @@
 #
 # データURL例: https://<username>.github.io/Mao_gathering/data/nature/001/image.png
 
-main:009
+main:005
