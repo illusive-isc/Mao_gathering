@@ -3,8 +3,6 @@ name: Distribute and Deploy
 on:
   push:
     paths:
-      - "tmp/**"
-      - "delete/**"
       - "data/**"
       - "config.txt"
       - "permissions.txt"
@@ -18,173 +16,79 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Delete types triggered by delete/[type]
+      - name: Regenerate config.txt from data/
         run: |
           python3 - <<'EOF'
-          import os, shutil
+          import os, re
 
-          delete_dir  = "delete"
           data_dir    = "data"
           config_path = "config.txt"
 
-          if not os.path.isdir(delete_dir):
-              print("no delete folder, skipping")
-              exit(0)
+          # 既存 config.txt を読み込み（コメント・空行・非 type:NNN 行は温存）
+          if os.path.isfile(config_path):
+              with open(config_path, "r", encoding="utf-8") as f:
+                  lines = f.readlines()
+          else:
+              lines = []
 
-          # delete/ 直下の .gitkeep 以外のエントリをタイプ名として扱う
-          triggers = [
-              f for f in os.listdir(delete_dir)
-              if f != ".gitkeep"
-          ]
-          if not triggers:
-              print("no delete triggers, skipping")
-              exit(0)
+          slot_re = re.compile(r"^([^:#\s]+)\s*:\s*\d+\s*$")
 
-          with open(config_path, "r", encoding="utf-8") as f:
-              lines = f.readlines()
-
-          for type_name in triggers:
-              # data/[type]/ を丸ごと削除
-              type_dir = os.path.join(data_dir, type_name)
-              if os.path.isdir(type_dir):
-                  shutil.rmtree(type_dir)
-                  print(f"deleted: data/{type_name}/")
-              else:
-                  print(f"no data dir for type: {type_name}")
-
-              # config.txt からそのタイプの行を削除
-              lines = [
-                  line for line in lines
-                  if not (
-                      line.strip()
-                      and not line.strip().startswith("#")
-                      and line.strip().split(":")[0] == type_name
-                  )
-              ]
-
-              # トリガーを削除（ファイルでもフォルダでも対応、.gitkeep は残す）
-              trigger_path = os.path.join(delete_dir, type_name)
-              if os.path.isfile(trigger_path):
-                  os.remove(trigger_path)
-              elif os.path.isdir(trigger_path):
-                  shutil.rmtree(trigger_path)
-              print(f"removed trigger: delete/{type_name}")
-
-          with open(config_path, "w", encoding="utf-8") as f:
-              f.writelines(lines)
-
-          print("delete complete")
-          EOF
-
-      - name: Distribute tmp/[type]/[name]/ entries to data/
-        run: |
-          python3 - <<'EOF'
-          import os, shutil
-
-          tmp_dir     = "tmp"
-          data_dir    = "data"
-          config_path = "config.txt"
-          exts        = (".jpg", ".jpeg", ".png", ".webp")
-
-          if not os.path.isdir(tmp_dir):
-              print("no tmp folder, skipping")
-              exit(0)
-
-          # config.txt 読み込み
-          with open(config_path, "r", encoding="utf-8") as f:
-              lines = f.readlines()
-
-          def get_max_slot(lines, type_name):
-              for line in lines:
-                  s = line.strip()
-                  if s and not s.startswith("#") and s.split(":")[0] == type_name:
-                      try:
-                          return int(s.split(":")[1])
-                      except (IndexError, ValueError):
-                          pass
-              return 0
-
-          def set_max_slot(lines, type_name, slot):
-              for i, line in enumerate(lines):
-                  s = line.strip()
-                  if s and not s.startswith("#") and s.split(":")[0] == type_name:
-                      lines[i] = f"{type_name}:{slot:03d}\n"
-                      return
-              # タイプが存在しない場合は末尾に追加
-              if lines and not lines[-1].endswith("\n"):
-                  lines[-1] += "\n"
-              lines.append(f"{type_name}:{slot:03d}\n")
-
-          # tmp/[type]/ を走査（.gitkeep は無視）
-          type_names = sorted([
-              d for d in os.listdir(tmp_dir)
-              if os.path.isdir(os.path.join(tmp_dir, d)) and d != ".gitkeep"
-          ])
-
-          for type_name in type_names:
-              type_tmp_dir = os.path.join(tmp_dir, type_name)
-              # tmp/[type]/[name]/ のサブフォルダをソートして処理
-              entries = sorted([
-                  d for d in os.listdir(type_tmp_dir)
-                  if os.path.isdir(os.path.join(type_tmp_dir, d))
-              ])
-
-              if not entries:
-                  continue
-
-              slot = get_max_slot(lines, type_name)
-
-              for entry_name in entries:
-                  entry_dir = os.path.join(type_tmp_dir, entry_name)
-
-                  # エントリフォルダ内の画像ファイルを探す
-                  image_file = None
-                  for fname in sorted(os.listdir(entry_dir)):
-                      if fname.lower().endswith(exts):
-                          image_file = os.path.join(entry_dir, fname)
-                          break
-
-                  if not image_file:
-                      print(f"skip (no image): tmp/{type_name}/{entry_name}/")
+          # data/[type]/ をスキャンして最大スロット番号を集計
+          type_slots = {}
+          if os.path.isdir(data_dir):
+              for type_name in sorted(os.listdir(data_dir)):
+                  type_dir = os.path.join(data_dir, type_name)
+                  if not os.path.isdir(type_dir) or type_name == ".gitkeep":
                       continue
+                  max_slot = 0
+                  for entry in os.listdir(type_dir):
+                      entry_path = os.path.join(type_dir, entry)
+                      if not os.path.isdir(entry_path):
+                          continue
+                      try:
+                          n = int(entry)
+                      except ValueError:
+                          continue
+                      if n > max_slot:
+                          max_slot = n
+                  type_slots[type_name] = max_slot
 
-                  slot += 1
-                  dest_dir = os.path.join(data_dir, type_name, f"{slot:03d}")
-                  os.makedirs(dest_dir, exist_ok=True)
+          # 既存行のうち type:NNN 形式の行を、現状の data/ に合わせて更新／削除
+          new_lines = []
+          seen = set()
+          for line in lines:
+              m = slot_re.match(line.strip())
+              if not m:
+                  new_lines.append(line)
+                  continue
+              type_name = m.group(1)
+              if type_name in type_slots:
+                  new_lines.append(f"{type_name}:{type_slots[type_name]:03d}\n")
+                  seen.add(type_name)
+              # data/ に無い type の行はドロップ
 
-                  # 画像を image.png として保存
-                  shutil.move(image_file, os.path.join(dest_dir, "image.png"))
-
-                  # tmp/meta.txt があればその内容を引き継ぐ
-                  tmp_meta_path = os.path.join(entry_dir, "meta.txt")
-                  if os.path.isfile(tmp_meta_path):
-                      with open(tmp_meta_path, "r", encoding="utf-8") as f:
-                          meta_contents = f.read()
-                  else:
-                      meta_contents = entry_name + "\n"
-                  with open(os.path.join(dest_dir, "meta.txt"), "w", encoding="utf-8") as f:
-                      f.write(meta_contents)
-
-                  # 処理済みエントリフォルダを削除
-                  shutil.rmtree(entry_dir)
-                  print(f"  data/{type_name}/{slot:03d}/ <- {entry_name}")
-
-              # config.txt の最大スロット番号を更新
-              set_max_slot(lines, type_name, slot)
-              print(f"{type_name}: max slot -> {slot:03d}")
+          # data/ にあるが config.txt に未記載の type を末尾に追加
+          missing = [t for t in type_slots if t not in seen]
+          if missing:
+              if new_lines and not new_lines[-1].endswith("\n"):
+                  new_lines[-1] += "\n"
+              for type_name in sorted(missing):
+                  new_lines.append(f"{type_name}:{type_slots[type_name]:03d}\n")
 
           with open(config_path, "w", encoding="utf-8") as f:
-              f.writelines(lines)
+              f.writelines(new_lines)
 
-          print("distribute complete")
+          for t in sorted(type_slots):
+              print(f"{t}: max slot -> {type_slots[t]:03d}")
+          print("config.txt regenerated")
           EOF
 
       - name: Commit and push if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add config.txt data/ tmp/ delete/
-          git diff --cached --quiet || git commit -m "auto: process tmp and delete triggers"
+          git add config.txt
+          git diff --cached --quiet || git commit -m "auto: refresh config.txt from data/"
           git push
 
       - name: Build deploy directory
